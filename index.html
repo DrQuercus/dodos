@@ -386,7 +386,8 @@
           <label for="in-source">Source externe — optionnel</label>
           <input type="url" id="in-source" placeholder="https://gist.githubusercontent.com/.../mots.json">
         </div>
-        <p class="note" style="margin:-6px 0 16px">Vide : les mots partent dans le lien, figés au moment de la copie. Rempli : le lien pointe vers ce fichier, et tu peux modifier tes mots quand tu veux sans renvoyer de lien.</p>
+        <p class="note" style="margin:-6px 0 4px">Vide : les mots partent dans le lien, figés au moment de la copie. Rempli : le lien pointe vers ce fichier, et tu peux modifier tes mots quand tu veux sans renvoyer de lien.</p>
+        <p class="note" id="avert-source" style="margin:0 0 16px;color:var(--mangue)"></p>
         <div class="liste-mots" id="liste-mots"></div>
         <button class="btn-large" id="generer-code">Générer le bloc à coller dans le code</button>
         <div class="bloc-code" id="bloc-code">
@@ -472,6 +473,8 @@ const MORTS = [
 const EMOJI = "🦤";
 const JOUR  = 86400000;
 const CLE   = "dodo-compte-a-rebours";
+const CLE_MOTS   = "dodo-mots";
+const CLE_SOURCE = "dodo-source";
 
 /* ————— Utilitaires ————— */
 const minuit = ms => { const d = new Date(ms); d.setHours(0,0,0,0); return d.getTime(); };
@@ -584,19 +587,55 @@ async function lireSource(url){
   }catch(e){ return null; }
 }
 
+
+/* ————— Persistance locale des brouillons ————— */
+function memoriserMots(){
+  try{ localStorage.setItem(CLE_MOTS, JSON.stringify(mots)); }catch(e){}
+}
+let tMots = null;
+function memoriserMotsPlusTard(){
+  clearTimeout(tMots);
+  tMots = setTimeout(memoriserMots, 400);
+}
+function memoriserSource(v){
+  try{ v ? localStorage.setItem(CLE_SOURCE, v) : localStorage.removeItem(CLE_SOURCE); }catch(e){}
+}
+
 async function chargerMots(){
   const p = new URLSearchParams(location.search);
-  const s = p.get("s") || SOURCE_MOTS;
+  let srcLocale = "";
+  try{ srcLocale = localStorage.getItem(CLE_SOURCE) || ""; }catch(e){}
+
+  const champ = document.getElementById("in-source");
+  champ.value = p.get("s") || srcLocale;
+
+  const s = p.get("s") || srcLocale || SOURCE_MOTS;
   if (s){
-    document.getElementById("in-source").value = p.get("s") || "";
     const a = await lireSource(s);
-    if (a){ mots = a; return; }
+    if (a){ mots = a; majAvertissementSource(true); remplirMots(); return; }
+    majAvertissementSource(false);
   }
+
   const m = p.get("m");
   if (m){
     const a = await decoderMots(m);
-    if (a) mots = a;
+    if (a){ mots = a; remplirMots(); return; }
   }
+
+  try{
+    const a = JSON.parse(localStorage.getItem(CLE_MOTS) || "null");
+    if (Array.isArray(a)){ mots = a; remplirMots(); }
+  }catch(e){}
+}
+
+function majAvertissementSource(ok){
+  const e = document.getElementById("avert-source");
+  if (!e) return;
+  const src = (document.getElementById("in-source").value || "").trim();
+  if (!src){ e.textContent = ""; return; }
+  e.textContent = ok
+    ? "Source externe active : c'est elle qui fait foi, la liste ci-dessous en est le reflet."
+    : "Source externe injoignable — vérifie l'adresse. La liste ci-dessous est utilisée en attendant.";
 }
 
 /* ————— Cases ouvertes ————— */
@@ -852,6 +891,16 @@ document.getElementById("appliquer-dates").addEventListener("click", () => {
   note("Appliqué. Copie le lien pour l'envoyer.");
 });
 
+const champSource = document.getElementById("in-source");
+champSource.addEventListener("change", async () => {
+  const v = champSource.value.trim();
+  memoriserSource(v);
+  if (!v){ majAvertissementSource(true); note("Source retirée : les mots repartiront dans le lien."); return; }
+  const a = await lireSource(v);
+  if (a){ mots = a; remplirMots(); majAvertissementSource(true); }
+  else majAvertissementSource(false);
+});
+
 const btnLien = document.getElementById("copier-lien");
 btnLien.addEventListener("click", async () => {
   const url = await lienPartage();
@@ -876,7 +925,7 @@ function remplirMots(){
     inp.type = "text"; inp.value = mots[i] || "";
     inp.placeholder = MOT_PAR_DEFAUT;
     inp.setAttribute("aria-label", "Petit mot de la nuit " + (i + 1));
-    inp.addEventListener("input", () => { mots[i] = inp.value; });
+    inp.addEventListener("input", () => { mots[i] = inp.value; memoriserMotsPlusTard(); });
     l.appendChild(r); l.appendChild(inp);
     liste.appendChild(l);
   }
@@ -923,8 +972,15 @@ btnRaz.addEventListener("click", () => {
     return;
   }
   desarmer();
-  try{ localStorage.removeItem(cleOuverts()); localStorage.removeItem(CLE); }catch(e){}
+  try{
+    localStorage.removeItem(cleOuverts());
+    localStorage.removeItem(CLE);
+    localStorage.removeItem(CLE_MOTS);
+    localStorage.removeItem(CLE_SOURCE);
+  }catch(e){}
   cfg = parDefaut(); mots = MESSAGES.slice();
+  document.getElementById("in-source").value = "";
+  majAvertissementSource(true);
   chargerOuverts(); appliquer(); remplirChamps(); remplirMots();
   document.getElementById("bloc-code").classList.remove("on");
   note("Retour aux valeurs inscrites dans le code.");
