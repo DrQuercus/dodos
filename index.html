@@ -353,7 +353,7 @@
 
     <div class="vue" id="vue-reglages">
       <h3>Réglages</h3>
-      <p class="sous">Les dates voyagent dans le lien. Les petits mots vivent dans le code de la page.</p>
+      <p class="sous">Ce panneau est un brouillon local : il ne survit ni au navigateur privé ni au téléphone de quelqu'un d'autre. Pour que tes réglages tiennent vraiment, génère la configuration et colle-la dans le code.</p>
 
       <div class="onglets">
         <button class="onglet actif" id="ong-dates">Dates</button>
@@ -377,7 +377,10 @@
           <button class="btn discret" id="fermer">Fermer</button>
           <button class="btn principal" id="appliquer-dates">Appliquer</button>
         </div>
-        <button class="btn-large" id="copier-lien">Copier le lien à envoyer</button>
+        <p class="note" id="etat-ligne" style="margin:0 0 14px"></p>
+        <button class="btn-large" id="publier">Publier pour tout le monde</button>
+        <button class="btn-large" id="generer-config">Générer la configuration complète</button>
+        <button class="btn-large" id="copier-lien">Copier un lien contenant ces réglages</button>
         <button class="btn-large danger" id="raz-reglages">Tout réinitialiser</button>
       </div>
 
@@ -387,14 +390,16 @@
           <input type="url" id="in-source" placeholder="https://gist.githubusercontent.com/.../mots.json">
         </div>
         <p class="note" style="margin:-6px 0 4px">Vide : les mots partent dans le lien, figés au moment de la copie. Rempli : le lien pointe vers ce fichier, et tu peux modifier tes mots quand tu veux sans renvoyer de lien.</p>
+        <p class="note" id="origine-mots" style="margin:0 0 8px"></p>
         <p class="note" id="avert-source" style="margin:0 0 16px;color:var(--mangue)"></p>
         <div class="liste-mots" id="liste-mots"></div>
-        <button class="btn-large" id="generer-code">Générer le bloc à coller dans le code</button>
-        <div class="bloc-code" id="bloc-code">
-          <label for="code">À remplacer en haut du fichier</label>
-          <textarea id="code" readonly rows="7" spellcheck="false"></textarea>
-          <button class="btn-large" id="copier-code">Copier le bloc</button>
-        </div>
+        <button class="btn-large" id="generer-code">Générer la configuration complète</button>
+      </div>
+
+      <div class="bloc-code" id="bloc-code">
+        <label for="code">À recopier en haut du fichier, en remplacement des blocs existants</label>
+        <textarea id="code" readonly rows="10" spellcheck="false"></textarea>
+        <button class="btn-large" id="copier-code">Copier</button>
       </div>
 
       <p class="note" id="note-stockage"></p>
@@ -404,6 +409,17 @@
 </div>
 
 <script>
+/* ═══════════════════════════════════════════════════════════
+   0. ÉTAT PARTAGÉ (facultatif mais recommandé)
+   Adresse du Worker Cloudflare. Renseignée, elle devient la
+   référence pour tout le monde : dates, messages et cases
+   ouvertes sont les mêmes pour tous les visiteurs, quel que
+   soit leur navigateur. Laissée vide, la page retombe sur le
+   fonctionnement local d'avant.
+   Ex : "https://dodos.toncompte.workers.dev"
+   ═══════════════════════════════════════════════════════════ */
+const API = "https://dodos.louis-rouillan-39a.workers.dev/";
+
 /* ═══════════════════════════════════════════════════════════
    1. MOT DE PASSE DES RÉGLAGES
    Il est lisible dans le code source : il empêche une ouverture
@@ -588,6 +604,76 @@ async function lireSource(url){
 }
 
 
+let origineMots = "code";
+
+function majOrigine(){
+  const e = document.getElementById("origine-mots");
+  if (!e) return;
+  const libelles = {
+    lien:      "Affichés actuellement : les messages contenus dans le lien ouvert.",
+    externe:   "Affichés actuellement : le contenu de la source externe.",
+    brouillon: "Affichés actuellement : tes brouillons enregistrés sur cet appareil. Ils ne partiront que si tu recopies le lien.",
+    partage:   "Affichés actuellement : les messages publiés sur l'état partagé. Ils valent pour tout le monde.",
+    code:      "Affichés actuellement : le tableau MESSAGES du code. Aucun brouillon ni lien n'a fourni de texte."
+  };
+  e.textContent = libelles[origineMots] || "";
+  e.style.color = origineMots === "brouillon" ? "var(--mangue)" : "var(--sauge)";
+}
+
+/* ————— État partagé ————— */
+let mdpSaisi = "";
+let enLigne  = false;
+
+async function lireEtat(){
+  if (!API) return null;
+  try{
+    const r = await fetch(API, { cache:"no-store" });
+    if (!r.ok) return null;
+    return await r.json();
+  }catch(e){ return null; }
+}
+
+async function ecrireEtat(charge){
+  if (!API) return null;
+  try{
+    const r = await fetch(API, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(charge)
+    });
+    if (!r.ok) return null;
+    return await r.json();
+  }catch(e){ return null; }
+}
+
+function appliquerEtat(e){
+  if (!e) return false;
+  if (e.cfg && isFinite(e.cfg.debut) && isFinite(e.cfg.fin) && e.cfg.fin > e.cfg.debut) cfg = e.cfg;
+  if (Array.isArray(e.mots)){ mots = e.mots; origineMots = "partage"; }
+  if (Array.isArray(e.ouverts)) ouverts = new Set(e.ouverts);
+  return true;
+}
+
+async function synchroniser(){
+  const e = await lireEtat();
+  enLigne = !!e;
+  majEtatLigne();
+  if (!e) return;
+  appliquerEtat(e);
+  appliquer();
+  majOrigine();
+}
+
+function majEtatLigne(){
+  const el = document.getElementById("etat-ligne");
+  if (!el) return;
+  if (!API){ el.textContent = "Mode local : chaque visiteur a son propre état."; el.style.color = "var(--sauge)"; return; }
+  el.textContent = enLigne
+    ? "Connecté à l'état partagé : tes réglages valent pour tout le monde."
+    : "État partagé injoignable — vérifie l'adresse du Worker.";
+  el.style.color = enLigne ? "var(--sauge)" : "var(--corail)";
+}
+
 /* ————— Persistance locale des brouillons ————— */
 function memoriserMots(){
   try{ localStorage.setItem(CLE_MOTS, JSON.stringify(mots)); }catch(e){}
@@ -612,20 +698,25 @@ async function chargerMots(){
   const s = p.get("s") || srcLocale || SOURCE_MOTS;
   if (s){
     const a = await lireSource(s);
-    if (a){ mots = a; majAvertissementSource(true); remplirMots(); return; }
+    if (a){ mots = a; origineMots = "externe"; majAvertissementSource(true); majOrigine(); remplirMots(); return; }
     majAvertissementSource(false);
   }
 
   const m = p.get("m");
   if (m){
     const a = await decoderMots(m);
-    if (a){ mots = a; remplirMots(); return; }
+    if (a){ mots = a; origineMots = "lien"; majOrigine(); remplirMots(); return; }
   }
 
   try{
     const a = JSON.parse(localStorage.getItem(CLE_MOTS) || "null");
-    if (Array.isArray(a)){ mots = a; remplirMots(); }
+    if (Array.isArray(a) && a.some(x => x && x.trim())){
+      mots = a; origineMots = "brouillon"; majOrigine(); remplirMots(); return;
+    }
   }catch(e){}
+
+  origineMots = "code";
+  majOrigine();
 }
 
 function majAvertissementSource(ok){
@@ -776,6 +867,7 @@ function ouvrirJour(i){
     ouverts.add(i); neuves.add(i); memoriserOuverts();
     bip(520, .18, "triangle");
     dessinerCalendrier(true);
+    if (API) ecrireEtat({ ouverts:[i] });
   }
   voileJour.classList.add("on");
   document.getElementById("jour-fermer").focus();
@@ -845,8 +937,10 @@ document.getElementById("mdp-valider").addEventListener("click", verifierMdp);
 document.getElementById("in-mdp").addEventListener("keydown", e => { if (e.key === "Enter") verifierMdp(); });
 
 function verifierMdp(){
-  if (document.getElementById("in-mdp").value === MOT_DE_PASSE){
+  const saisi = document.getElementById("in-mdp").value;
+  if (saisi === MOT_DE_PASSE){
     deverrouille = true;
+    mdpSaisi = saisi;
     afficherVue();
     remplirChamps(); remplirMots();
     note("Les dates se partagent par le lien. Les petits mots doivent être recopiés dans le code.");
@@ -871,7 +965,7 @@ function onglet(actif){
   document.getElementById("tab-mots").classList.toggle("on", actif === "mots");
 }
 document.getElementById("ong-dates").addEventListener("click", () => onglet("dates"));
-document.getElementById("ong-mots").addEventListener("click", () => { remplirMots(); onglet("mots"); });
+document.getElementById("ong-mots").addEventListener("click", () => { remplirMots(); majOrigine(); majAvertissementSource(true); majEtatLigne(); onglet("mots"); });
 
 /* ————— Onglet dates ————— */
 function remplirChamps(){
@@ -897,16 +991,37 @@ champSource.addEventListener("change", async () => {
   memoriserSource(v);
   if (!v){ majAvertissementSource(true); note("Source retirée : les mots repartiront dans le lien."); return; }
   const a = await lireSource(v);
-  if (a){ mots = a; remplirMots(); majAvertissementSource(true); }
+  if (a){ mots = a; origineMots = "externe"; remplirMots(); majOrigine(); majAvertissementSource(true); }
   else majAvertissementSource(false);
+});
+
+document.getElementById("publier").addEventListener("click", async () => {
+  if (!API){ note("Aucun Worker configuré : renseigne la constante API en haut du fichier."); return; }
+  const btn = document.getElementById("publier");
+  btn.textContent = "Publication…";
+  const e = await ecrireEtat({ mdp: mdpSaisi, cfg, mots: mots.slice(0, totalNuits()) });
+  if (e){
+    enLigne = true; majEtatLigne();
+    btn.textContent = "Publié ✓";
+    note("Dates et messages enregistrés en ligne. Tout visiteur les verra, y compris en navigation privée.");
+  } else {
+    btn.textContent = "Échec — mot de passe ou adresse";
+    note("Le Worker a refusé l'écriture. Vérifie que MOT_DE_PASSE côté Worker est identique à celui saisi ici.");
+  }
+  setTimeout(() => { btn.textContent = "Publier pour tout le monde"; }, 2600);
 });
 
 const btnLien = document.getElementById("copier-lien");
 btnLien.addEventListener("click", async () => {
   const url = await lienPartage();
-  await copier(url, btnLien, "Copier le lien à envoyer");
-  if (url.length > 3000){
-    note("Attention : le lien fait " + url.length + " caractères. Passe par une source externe si ta messagerie le tronque.");
+  await copier(url, btnLien, "Copier un lien contenant ces réglages");
+  const n = mots.slice(0, totalNuits()).filter(x => x && x.trim()).length;
+  if (url.includes("&s=")){
+    note("Lien copié. Il pointe vers ta source externe : tes mots resteront modifiables.");
+  } else if (n === 0){
+    note("Lien copié, mais il ne contient aucun message. Écris-les dans l'onglet Petits mots puis recopie le lien.");
+  } else {
+    note(`Lien copié avec ${n} message${n > 1 ? "s" : ""} embarqué${n > 1 ? "s" : ""} (${url.length} caractères). C'est ce lien-là qu'il faut envoyer.`);
   }
 });
 
@@ -925,7 +1040,11 @@ function remplirMots(){
     inp.type = "text"; inp.value = mots[i] || "";
     inp.placeholder = MOT_PAR_DEFAUT;
     inp.setAttribute("aria-label", "Petit mot de la nuit " + (i + 1));
-    inp.addEventListener("input", () => { mots[i] = inp.value; memoriserMotsPlusTard(); });
+    inp.addEventListener("input", () => {
+      mots[i] = inp.value;
+      memoriserMotsPlusTard();
+      if (origineMots !== "externe"){ origineMots = "brouillon"; majOrigine(); }
+    });
     l.appendChild(r); l.appendChild(inp);
     liste.appendChild(l);
   }
@@ -933,17 +1052,26 @@ function remplirMots(){
 
 function blocCode(){
   const total = totalNuits();
+  const src = (document.getElementById("in-source").value || "").trim();
   const lignes = [];
   for (let i = 0; i < total; i++) lignes.push("  " + JSON.stringify(mots[i] || ""));
-  return "const MESSAGES = [\n" + lignes.join(",\n") + "\n];";
+  return 'const SOURCE_MOTS = ' + JSON.stringify(src) + ';\n\n' +
+         'const MESSAGES = [\n' + lignes.join(",\n") + '\n];\n\n' +
+         'const CONFIG = {\n' +
+         '  titre: ' + JSON.stringify(cfg.titre || "") + ',\n' +
+         '  debut: "' + pourInput(cfg.debut) + '",\n' +
+         '  fin:   "' + pourInput(cfg.fin) + '"\n' +
+         '};';
 }
-document.getElementById("generer-code").addEventListener("click", () => {
+function genererConfig(){
   document.getElementById("code").value = blocCode();
   document.getElementById("bloc-code").classList.add("on");
-  note("Remplace le bloc MESSAGES en haut du fichier par celui-ci, puis pousse sur GitHub.");
-});
+  note("Remplace les trois blocs correspondants en haut de ton index.html par celui-ci, puis pousse sur GitHub. C'est ce qui rend les réglages durables pour tout le monde.");
+}
+document.getElementById("generer-code").addEventListener("click", genererConfig);
+document.getElementById("generer-config").addEventListener("click", genererConfig);
 const btnCode = document.getElementById("copier-code");
-btnCode.addEventListener("click", () => copier(document.getElementById("code").value, btnCode, "Copier le bloc"));
+btnCode.addEventListener("click", () => copier(document.getElementById("code").value, btnCode, "Copier"));
 
 async function copier(txt, btn, libelle){
   let ok = false;
@@ -978,7 +1106,7 @@ btnRaz.addEventListener("click", () => {
     localStorage.removeItem(CLE_MOTS);
     localStorage.removeItem(CLE_SOURCE);
   }catch(e){}
-  cfg = parDefaut(); mots = MESSAGES.slice();
+  cfg = parDefaut(); mots = MESSAGES.slice(); origineMots = "code"; majOrigine();
   document.getElementById("in-source").value = "";
   majAvertissementSource(true);
   chargerOuverts(); appliquer(); remplirChamps(); remplirMots();
@@ -1094,6 +1222,8 @@ chargerOuverts();
 remplirPuces();
 appliquer();
 chargerMots();
+synchroniser();
+if (API) setInterval(synchroniser, 60000);
 setInterval(tic, 1000);
 setInterval(() => {
   if (dessinerCalendrier(false)) dessinerColonie();
